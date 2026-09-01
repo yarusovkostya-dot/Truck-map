@@ -77,7 +77,29 @@
             z-index: 1000 !important;
         }
 
-        /* Стиль для всплывающего окна Leaflet в тёмной теме */
+        /* Кнопка центрирования геолокации */
+        .my-location-btn {
+            position: absolute;
+            bottom: 80px;
+            right: 12px;
+            z-index: 1000;
+            background: #1e1e1e;
+            border: 2px solid #3b82f6;
+            color: white;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            cursor: pointer;
+        }
+        .my-location-btn:active {
+            transform: scale(0.92);
+        }
+
         .leaflet-popup-content-wrapper {
             background: #1e1e1e !important;
             color: #ffffff !important;
@@ -136,14 +158,14 @@
         <button class="filter-btn danger-btn" onclick="toggleFilter('no_parking', this)">⛔ Выгоняют / Нельзя паузу</button>
     </div>
 
-    <div id="loading">🔍 Поиск грузовых TIR мест...</div>
+    <div class="my-location-btn" onclick="centerOnUser()">🎯</div>
+    <div id="loading">🔍 Поиск мест вокруг вас...</div>
     <div id="map"></div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        // Переключатель слоев карт: Стандартная и Спутник (Esri Satellite)
         const streetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
@@ -156,7 +178,7 @@
 
         var map = L.map('map', {
             center: [52.2297, 21.0122],
-            zoom: 10,
+            zoom: 12,
             layers: [streetMap]
         });
 
@@ -167,6 +189,7 @@
 
         L.control.layers(baseMaps, null, { position: 'bottomright' }).addTo(map);
 
+        let userCoords = null;
         let locations = [];
         let markers = [];
         let activeFilters = new Set();
@@ -187,20 +210,18 @@
         function loadRealPlaces(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
+            // Широкий охват стоянок, зон отдыха, АЗС и промзон
             const query = `
                 [out:json];
                 (
-                  node["amenity"="parking"]["hgv"="yes"](around:25000, ${lat}, ${lng});
-                  node["amenity"="parking"]["hgv"="designated"](around:25000, ${lat}, ${lng});
-                  way["amenity"="parking"]["hgv"="yes"](around:25000, ${lat}, ${lng});
+                  node["amenity"="parking"](around:25000, ${lat}, ${lng});
+                  way["amenity"="parking"](around:25000, ${lat}, ${lng});
                   node["highway"="rest_area"](around:25000, ${lat}, ${lng});
                   node["highway"="services"](around:25000, ${lat}, ${lng});
-                  node["amenity"="fuel"]["fuel:HGV"="yes"](around:25000, ${lat}, ${lng});
-                  node["amenity"="fuel"]["hgv"="yes"](around:25000, ${lat}, ${lng});
-                  node["amenity"="fuel"]["shower"="yes"](around:25000, ${lat}, ${lng});
+                  node["amenity"="fuel"](around:25000, ${lat}, ${lng});
                   node["landuse"="industrial"](around:25000, ${lat}, ${lng});
                 );
-                out center 80;
+                out center 120;
             `;
 
             fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query))
@@ -211,6 +232,9 @@
                         const tags = el.tags || {};
                         const latPos = el.lat || (el.center && el.center.lat);
                         const lonPos = el.lon || (el.center && el.center.lon);
+
+                        // Отсекаем явные легковые мелкие подземные паркинги
+                        if (tags.parking === 'underground' || tags.parking === 'multi-storey') return null;
 
                         let type = 'parking';
                         let nameLower = (tags.name || "").toLowerCase();
@@ -228,7 +252,7 @@
                         let dkvTag = (tags['payment:dkv'] === 'yes' || tags.payment === 'dkv') ? 'dkv' : '';
 
                         return {
-                            name: tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС TIR' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
+                            name: tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
                             type: type,
                             coords: [latPos, lonPos],
                             reviews: [
@@ -240,7 +264,7 @@
                                 dkvTag
                             ]
                         };
-                    }).filter(item => item.coords[0] && item.coords[1]);
+                    }).filter(item => item && item.coords[0] && item.coords[1]);
 
                     renderMarkers();
                 })
@@ -318,28 +342,39 @@
             renderMarkers();
         }
 
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(function(position) {
-                var lat = position.coords.latitude;
-                var lng = position.coords.longitude;
-                map.setView([lat, lng], 10);
-                
-                L.circleMarker([lat, lng], {
-                    radius: 9,
-                    color: '#ffffff',
-                    weight: 3,
-                    fillColor: '#3b82f6',
-                    fillOpacity: 1
-                }).addTo(map).bindPopup("<b>Вы здесь</b>");
-
-                loadRealPlaces(lat, lng);
-            }, function() {
-                loadRealPlaces(52.2297, 21.0122);
-            });
-        } else {
-            loadRealPlaces(52.2297, 21.0122);
+        function centerOnUser() {
+            if (userCoords) {
+                map.setView(userCoords, 14);
+            } else {
+                getUserLocation();
+            }
         }
+
+        function getUserLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    userCoords = [position.coords.latitude, position.coords.longitude];
+                    map.setView(userCoords, 12);
+                    
+                    L.circleMarker(userCoords, {
+                        radius: 9,
+                        color: '#ffffff',
+                        weight: 3,
+                        fillColor: '#3b82f6',
+                        fillOpacity: 1
+                    }).addTo(map).bindPopup("<b>Вы здесь</b>");
+
+                    loadRealPlaces(userCoords[0], userCoords[1]);
+                }, function() {
+                    loadRealPlaces(52.2297, 21.0122);
+                });
+            } else {
+                loadRealPlaces(52.2297, 21.0122);
+            }
+        }
+
+        getUserLocation();
     </script>
 </body>
-    </html>
-    
+                                                               </html>
+                                                               
