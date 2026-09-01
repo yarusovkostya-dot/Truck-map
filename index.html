@@ -141,15 +141,17 @@
         function loadRealPlaces(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
+            // Поиск обычных парковок, зон отдыха, АЗС, фирм и автохофов (highway=services)
             const query = `
                 [out:json];
                 (
-                  node["amenity"="parking"](around:15000, ${lat}, ${lng});
-                  node["highway"="rest_area"](around:15000, ${lat}, ${lng});
-                  node["amenity"="fuel"](around:15000, ${lat}, ${lng});
-                  node["industrial"](around:15000, ${lat}, ${lng});
+                  node["amenity"="parking"](around:20000, ${lat}, ${lng});
+                  node["highway"="rest_area"](around:20000, ${lat}, ${lng});
+                  node["highway"="services"](around:20000, ${lat}, ${lng});
+                  node["amenity"="fuel"](around:20000, ${lat}, ${lng});
+                  node["industrial"](around:20000, ${lat}, ${lng});
                 );
-                out body 50;
+                out body 60;
             `;
 
             fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query))
@@ -158,17 +160,25 @@
                     document.getElementById('loading').style.display = 'none';
                     locations = data.elements.map(el => {
                         let type = 'parking';
-                        if (el.tags.amenity === 'fuel') type = 'fuel';
-                        if (el.tags.industrial) type = 'factory';
+                        let nameLower = (el.tags.name || "").toLowerCase();
+
+                        if (el.tags.highway === 'services' || nameLower.includes('autohof')) {
+                            type = 'autohof';
+                        } else if (el.tags.amenity === 'fuel') {
+                            type = 'fuel';
+                        } else if (el.tags.industrial) {
+                            type = 'factory';
+                        }
 
                         let feeText = el.tags.fee ? (el.tags.fee === 'yes' ? 'платная' : 'бесплатная') : '';
                         let dkvText = (el.tags['payment:dkv'] === 'yes' || el.tags.payment === 'dkv') ? 'dkv' : '';
 
                         return {
-                            name: el.tags.name || (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR')),
+                            name: el.tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
                             type: type,
                             coords: [el.lat, el.lon],
                             reviews: [
+                                el.tags.name || "",
                                 el.tags.description || "",
                                 el.tags.note || "",
                                 feeText,
@@ -206,6 +216,7 @@
                 }
 
                 let iconSymbol = '🅿️';
+                if (loc.type === 'autohof') iconSymbol = '🚛';
                 if (loc.type === 'fuel') iconSymbol = '⛽';
                 if (loc.type === 'factory') iconSymbol = '🏢';
 
@@ -244,7 +255,7 @@
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
                 var lng = position.coords.longitude;
-                map.setView([lat, lng], 11);
+                map.setView([lat, lng], 10);
                 
                 L.circleMarker([lat, lng], {
                     radius: 9,
