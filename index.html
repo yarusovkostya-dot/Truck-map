@@ -95,13 +95,16 @@
 <body>
 
     <div class="filter-bar">
-        <button class="filter-btn danger-btn" onclick="toggleFilter('no_parking', this)">⛔ Выгоняют / Нельзя паузу</button>
         <button class="filter-btn" onclick="toggleFilter('firm_parking', this)">🅿️ Парковка у фирмы</button>
         <button class="filter-btn" onclick="toggleFilter('street_parking', this)">🛣️ Вдоль дороги</button>
+        <button class="filter-btn" onclick="toggleFilter('free_parking', this)">🆓 Бесплатная</button>
+        <button class="filter-btn" onclick="toggleFilter('paid_parking', this)">💳 Платная</button>
+        <button class="filter-btn" onclick="toggleFilter('dkv', this)">💳 DKV</button>
         <button class="filter-btn" onclick="toggleFilter('shower', this)">🚿 Душ</button>
         <button class="filter-btn" onclick="toggleFilter('security', this)">🛡️ Охрана</button>
         <button class="filter-btn" onclick="toggleFilter('quiet', this)">🤫 Тихо</button>
         <button class="filter-btn" onclick="toggleFilter('shop', this)">🛒 Магазин</button>
+        <button class="filter-btn danger-btn" onclick="toggleFilter('no_parking', this)">⛔ Выгоняют / Нельзя паузу</button>
     </div>
 
     <div id="loading">🔍 Поиск мест вокруг вас...</div>
@@ -126,17 +129,18 @@
             no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "запрещено", "прогоняют", "zakaz postoju", "wyganiają", "no parking", "parkverbot"],
             firm_parking: ["парковка у фирмы", "перед фирмой", "на территории", "przed firmą", "na terenie", "company parking", "vor der firma"],
             street_parking: ["вдоль дороги", "на улице", "промзона", "обочина", "na ulicy", "na drodze", "industrial area", "straßenrand"],
+            free_parking: ["бесплатная", "бесплатно", "бесплатный", "darmowa", "darmowy", "bezpłatna", "bezpłatny", "free", "kostenlos"],
+            paid_parking: ["платная", "платно", "платный", "płatna", "płatny", "paid", "fee", "gebührenpflichtig", "kostenpflichtig"],
+            dkv: ["dkv", "дкв", "dkv card", "dkv box"],
             shower: ["душ", "душевая", "prysznic", "shower", "dusche"],
             security: ["охрана", "забор", "камеры", "ochrona", "strzeżony", "security", "bewacht"],
             quiet: ["тихо", "тишина", "spokojnie", "quiet", "ruhig"],
             shop: ["магазин", "супермаркет", "sklep", "shop", "lidl", "aldi", "biedronka"]
         };
 
-        // Загрузка реальных мест вокруг с помощью Overpass API
         function loadRealPlaces(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
-            // Радиус поиска около 15 км
             const query = `
                 [out:json];
                 (
@@ -157,13 +161,18 @@
                         if (el.tags.amenity === 'fuel') type = 'fuel';
                         if (el.tags.industrial) type = 'factory';
 
+                        let feeText = el.tags.fee ? (el.tags.fee === 'yes' ? 'платная' : 'бесплатная') : '';
+                        let dkvText = (el.tags['payment:dkv'] === 'yes' || el.tags.payment === 'dkv') ? 'dkv' : '';
+
                         return {
                             name: el.tags.name || (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR')),
                             type: type,
                             coords: [el.lat, el.lon],
                             reviews: [
-                                el.tags.description || "Загрузка реальных отзывов...",
-                                el.tags.note || ""
+                                el.tags.description || "",
+                                el.tags.note || "",
+                                feeText,
+                                dkvText
                             ]
                         };
                     });
@@ -231,7 +240,6 @@
             renderMarkers();
         }
 
-        // Определение местоположения пользователя
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
@@ -248,7 +256,6 @@
 
                 loadRealPlaces(lat, lng);
             }, function() {
-                // Если нет геолокации, загружаем по умолчанию для центра Варшавы
                 loadRealPlaces(52.2297, 21.0122);
             });
         } else {
