@@ -10,10 +10,65 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
         #map { width: 100%; height: 100vh; }
+        
+        /* Панель фильтров вверху */
+        .filter-bar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+        }
+        .filter-btn {
+            background: #ffffff;
+            border: 2px solid #007bff;
+            color: #007bff;
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }
+        .filter-btn.active {
+            background: #007bff;
+            color: #ffffff;
+        }
+
+        /* Стиль пользовательских иконок-маркеров */
+        .custom-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            border-radius: 50%;
+            border: 3px solid #007bff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+            font-size: 18px;
+        }
+        .custom-marker.matched {
+            border-color: #28a745;
+            background: #e8f5e9;
+            transform: scale(1.2);
+        }
     </style>
 </head>
 <body>
+
+    <div class="filter-bar">
+        <button class="filter-btn" onclick="toggleFilter('shower', this)">🚿 Душ</button>
+        <button class="filter-btn" onclick="toggleFilter('security', this)">🛡️ Охрана</button>
+        <button class="filter-btn" onclick="toggleFilter('quiet', this)">🤫 Тихо</button>
+        <button class="filter-btn" onclick="toggleFilter('shop', this)">🛒 Магазин</button>
+    </div>
+
     <div id="map"></div>
+
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
@@ -25,17 +80,37 @@
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
+        // Определение геолокации
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
                 var lng = position.coords.longitude;
-                map.setView([lat, lng], 12);
-                L.circleMarker([lat, lng], { radius: 8, color: '#007bff', fillColor: '#007bff', fillOpacity: 0.8 }).addTo(map).bindPopup("Вы здесь");
+                map.setView([lat, lng], 11);
+                
+                L.circleMarker([lat, lng], {
+                    radius: 9,
+                    color: '#ffffff',
+                    weight: 3,
+                    fillColor: '#007bff',
+                    fillOpacity: 1
+                }).addTo(map).bindPopup("<b>Вы здесь</b>");
             });
         }
 
-        var parking = L.marker([52.2297, 21.0122]).addTo(map);
-        parking.bindPopup("<b>🚚 Парковка A2 TIR</b><br>🟢 Отзывы:<br>• <i>«Отличный душ, тихо ночью»</i>");
+        // Пример маркера парковки со значком
+        var parkingIcon = L.divIcon({
+            className: 'custom-marker',
+            html: '🚚',
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+        });
+
+        var parking = L.marker([52.2297, 21.0122], {icon: parkingIcon}).addTo(map);
+        parking.bindPopup("<b>🚚 Парковка A2 TIR</b><br>• 🚿 <i>Чистый душ (3€)</i><br>• 🤫 <i>Тихо ночью</i>");
+
+        function toggleFilter(type, btn) {
+            btn.classList.toggle('active');
+        }
     </script>
 </body>
 </html>
