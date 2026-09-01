@@ -77,6 +77,35 @@
             z-index: 1000 !important;
         }
 
+        /* Стиль для всплывающего окна Leaflet в тёмной теме */
+        .leaflet-popup-content-wrapper {
+            background: #1e1e1e !important;
+            color: #ffffff !important;
+            border-radius: 12px !important;
+            padding: 4px !important;
+        }
+        .leaflet-popup-tip {
+            background: #1e1e1e !important;
+        }
+        .popup-btn {
+            display: block;
+            margin-top: 6px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            text-align: center;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .btn-google {
+            background: #ea4335;
+            color: #ffffff !important;
+        }
+        .btn-route {
+            background: #3b82f6;
+            color: #ffffff !important;
+        }
+
         #loading {
             position: absolute;
             bottom: 20px;
@@ -107,19 +136,36 @@
         <button class="filter-btn danger-btn" onclick="toggleFilter('no_parking', this)">⛔ Выгоняют / Нельзя паузу</button>
     </div>
 
-    <div id="loading">🔍 Поиск мест вокруг вас...</div>
+    <div id="loading">🔍 Поиск грузовых TIR мест...</div>
     <div id="map"></div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        var map = L.map('map').setView([52.2297, 21.0122], 10);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Переключатель слоев карт: Стандартная и Спутник (Esri Satellite)
+        const streetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
-        }).addTo(map);
+        });
+
+        const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 18,
+            attribution: 'Tiles &copy; Esri'
+        });
+
+        var map = L.map('map', {
+            center: [52.2297, 21.0122],
+            zoom: 10,
+            layers: [streetMap]
+        });
+
+        const baseMaps = {
+            "🗺️ Карта": streetMap,
+            "🛰️ Спутник": satelliteMap
+        };
+
+        L.control.layers(baseMaps, null, { position: 'bottomright' }).addTo(map);
 
         let locations = [];
         let markers = [];
@@ -129,10 +175,10 @@
             no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "запрещено", "прогоняют", "zakaz postoju", "wyganiają", "no parking", "parkverbot"],
             firm_parking: ["парковка у фирмы", "перед фирмой", "на территории", "przed firmą", "na terenie", "company parking", "vor der firma"],
             street_parking: ["вдоль дороги", "на улице", "промзона", "обочина", "na ulicy", "na drodze", "industrial area", "straßenrand"],
-            free_parking: ["бесплатная", "бесплатно", "бесплатный", "darmowa", "darmowy", "bezpłatna", "bezpłatny", "free", "kostenlos"],
-            paid_parking: ["платная", "платно", "платный", "płatna", "płatny", "paid", "fee", "gebührenpflichtig", "kostenpflichtig"],
+            free_parking: ["бесплатная", "бесплатно", "бесплатный", "darmowa", "darmowy", "bezpłatna", "bezpłatny", "free", "kostenlos", "fee_no"],
+            paid_parking: ["платная", "платно", "платный", "płatna", "płatny", "paid", "fee", "gebührenpflichtig", "kostenpflichtig", "fee_yes"],
             dkv: ["dkv", "дкв", "dkv card", "dkv box"],
-            shower: ["душ", "душевая", "prysznic", "shower", "dusche"],
+            shower: ["душ", "душевая", "prysznic", "shower", "dusche", "has_shower"],
             security: ["охрана", "забор", "камеры", "ochrona", "strzeżony", "security", "bewacht"],
             quiet: ["тихо", "тишина", "spokojnie", "quiet", "ruhig"],
             shop: ["магазин", "супермаркет", "sklep", "shop", "lidl", "aldi", "biedronka"]
@@ -141,17 +187,20 @@
         function loadRealPlaces(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
-            // Поиск обычных парковок, зон отдыха, АЗС, фирм и автохофов (highway=services)
             const query = `
                 [out:json];
                 (
-                  node["amenity"="parking"](around:20000, ${lat}, ${lng});
-                  node["highway"="rest_area"](around:20000, ${lat}, ${lng});
-                  node["highway"="services"](around:20000, ${lat}, ${lng});
-                  node["amenity"="fuel"](around:20000, ${lat}, ${lng});
-                  node["industrial"](around:20000, ${lat}, ${lng});
+                  node["amenity"="parking"]["hgv"="yes"](around:25000, ${lat}, ${lng});
+                  node["amenity"="parking"]["hgv"="designated"](around:25000, ${lat}, ${lng});
+                  way["amenity"="parking"]["hgv"="yes"](around:25000, ${lat}, ${lng});
+                  node["highway"="rest_area"](around:25000, ${lat}, ${lng});
+                  node["highway"="services"](around:25000, ${lat}, ${lng});
+                  node["amenity"="fuel"]["fuel:HGV"="yes"](around:25000, ${lat}, ${lng});
+                  node["amenity"="fuel"]["hgv"="yes"](around:25000, ${lat}, ${lng});
+                  node["amenity"="fuel"]["shower"="yes"](around:25000, ${lat}, ${lng});
+                  node["landuse"="industrial"](around:25000, ${lat}, ${lng});
                 );
-                out body 60;
+                out center 80;
             `;
 
             fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query))
@@ -159,33 +208,40 @@
                 .then(data => {
                     document.getElementById('loading').style.display = 'none';
                     locations = data.elements.map(el => {
-                        let type = 'parking';
-                        let nameLower = (el.tags.name || "").toLowerCase();
+                        const tags = el.tags || {};
+                        const latPos = el.lat || (el.center && el.center.lat);
+                        const lonPos = el.lon || (el.center && el.center.lon);
 
-                        if (el.tags.highway === 'services' || nameLower.includes('autohof')) {
+                        let type = 'parking';
+                        let nameLower = (tags.name || "").toLowerCase();
+
+                        if (tags.highway === 'services' || nameLower.includes('autohof')) {
                             type = 'autohof';
-                        } else if (el.tags.amenity === 'fuel') {
+                        } else if (tags.amenity === 'fuel') {
                             type = 'fuel';
-                        } else if (el.tags.industrial) {
+                        } else if (tags.landuse === 'industrial') {
                             type = 'factory';
                         }
 
-                        let feeText = el.tags.fee ? (el.tags.fee === 'yes' ? 'платная' : 'бесплатная') : '';
-                        let dkvText = (el.tags['payment:dkv'] === 'yes' || el.tags.payment === 'dkv') ? 'dkv' : '';
+                        let feeTag = tags.fee === 'yes' ? 'fee_yes' : (tags.fee === 'no' ? 'fee_no' : '');
+                        let showerTag = (tags.shower === 'yes' || tags['amenity:shower'] === 'yes') ? 'has_shower' : '';
+                        let dkvTag = (tags['payment:dkv'] === 'yes' || tags.payment === 'dkv') ? 'dkv' : '';
 
                         return {
-                            name: el.tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
+                            name: tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС TIR' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
                             type: type,
-                            coords: [el.lat, el.lon],
+                            coords: [latPos, lonPos],
                             reviews: [
-                                el.tags.name || "",
-                                el.tags.description || "",
-                                el.tags.note || "",
-                                feeText,
-                                dkvText
+                                tags.name || "",
+                                tags.description || "",
+                                tags.note || "",
+                                feeTag,
+                                showerTag,
+                                dkvTag
                             ]
                         };
-                    });
+                    }).filter(item => item.coords[0] && item.coords[1]);
+
                     renderMarkers();
                 })
                 .catch(err => {
@@ -236,7 +292,18 @@
                 });
 
                 const m = L.marker(loc.coords, {icon: customIcon}).addTo(map);
-                m.bindPopup(`<b>${loc.name}</b><br><a href="https://www.google.com/maps/search/?api=1&query=${loc.coords[0]},${loc.coords[1]}" target="_blank" style="color:#3b82f6;font-weight:bold;">📍 Открыть маршрут</a>`);
+
+                const googleSearchUrl = `https://www.google.com/maps/search/?api=1&query=${loc.coords[0]},${loc.coords[1]}`;
+                const googleRouteUrl = `https://www.google.com/maps/dir/?api=1&destination=${loc.coords[0]},${loc.coords[1]}`;
+
+                m.bindPopup(`
+                    <div style="text-align:center;">
+                        <b style="font-size:14px;">${loc.name}</b>
+                        <a href="${googleSearchUrl}" target="_blank" class="popup-btn btn-google">🗺️ Google Карта / Отзывы</a>
+                        <a href="${googleRouteUrl}" target="_blank" class="popup-btn btn-route">🧭 Навигатор (Маршрут)</a>
+                    </div>
+                `);
+
                 markers.push({ location: loc, marker: m });
             });
         }
@@ -274,4 +341,5 @@
         }
     </script>
 </body>
-</html>
+    </html>
+    
