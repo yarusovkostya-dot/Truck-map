@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Поиск парковок и фирм TIR</title>
+    <title>Карта TIR парковок и фирм</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -76,6 +76,20 @@
             transform: scale(1.3);
             z-index: 1000 !important;
         }
+
+        #loading {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -90,87 +104,76 @@
         <button class="filter-btn" onclick="toggleFilter('shop', this)">🛒 Магазин</button>
     </div>
 
+    <div id="loading">🔍 Поиск мест вокруг вас...</div>
     <div id="map"></div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        var map = L.map('map').setView([52.2297, 21.0122], 6);
+        var map = L.map('map').setView([52.2297, 21.0122], 10);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        const locations = [
-            {
-                name: "🏢 Amazon Logistics Poznań",
-                type: "factory",
-                coords: [52.3300, 16.8200],
-                reviews: [
-                    "Brak parkingu na terenie, wyganiają przed bramą!", 
-                    "Стоять нельзя, сразу приезжает полиция и штрафует."
-                ]
-            },
-            {
-                name: "🏢 Sklad Raben Logistics",
-                type: "factory",
-                coords: [52.3600, 16.9500],
-                reviews: [
-                    "Jest duży parking przed firmą z toaletą.", 
-                    "Good company parking in front of gate."
-                ]
-            },
-            {
-                name: "🅿️ Autohof A2 Euro-Rest",
-                type: "parking",
-                coords: [52.1530, 20.9300],
-                reviews: [
-                    "Sehr saubere Dusche und bewachtes gelände.", 
-                    "Czysty prysznic, bezpieczny parking."
-                ]
-            }
-        ];
+        let locations = [];
+        let markers = [];
+        let activeFilters = new Set();
 
         const keywords = {
-            no_parking: [
-                "нельзя стоять", "выгоняют", "паузу нельзя", "запрещено", "прогоняют", "стоянка запрещена", "полиция", "ночевать нельзя",
-                "zakaz postoju", "wyganiają", "nie można stać", "zakaz pauzy", "zakaz parkowania", "policja wygania", "nie wolno",
-                "no parking", "chased away", "no pause", "forbidden", "kicked out", "police", "no overnight",
-                "parkverbot", "verboten", "verjagt", "keine pause", "polizei", "verboten zu parken"
-            ],
-            firm_parking: [
-                "парковка у фирмы", "перед фирмой", "на территории", "перед шлагбаумом", "карман",
-                "przed firmą", "na terenie", "parking przed", "miejsca przed", "parking firmowy",
-                "company parking", "in front of gate", "on-site", "inside",
-                "vor der firma", "firmenparkplatz", "auf dem gelände", "vor dem tor"
-            ],
-            street_parking: [
-                "вдоль дороги", "на улице", "промзона", "промка", "обочина", "вдоль забора",
-                "na ulicy", "na drodze", "pobocze", "strefa przemysłowa", "wzdłuż płotu",
-                "on the street", "side road", "industrial area", "street parking", "along the road",
-                "an der straße", "straßenrand", "gewerbegebiet", "straße"
-            ],
-            shower: [
-                "душ", "душевая", "prysznic", "prysznice", "shower", "showers", "dusche", "duschen", "dus", "dušas", "sprcha"
-            ],
-            security: [
-                "охрана", "забор", "камеры", "охраняемый", "безопасный",
-                "ochrona", "strzeżony", "płot", "kamery", "bezpiecznie",
-                "security", "guarded", "fenced", "cameras", "safe",
-                "bewacht", "zaun", "kameras", "sicherheit"
-            ],
-            quiet: [
-                "тихо", "тишина", "spokojnie", "cicho", "quiet", "ruhig", "silent"
-            ],
-            shop: [
-                "магазин", "супермаркет", "sklep", "market", "shop", "supermarket", "lidl", "aldi", "biedronka", "kaufland", "edeka"
-            ]
+            no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "запрещено", "прогоняют", "zakaz postoju", "wyganiają", "no parking", "parkverbot"],
+            firm_parking: ["парковка у фирмы", "перед фирмой", "на территории", "przed firmą", "na terenie", "company parking", "vor der firma"],
+            street_parking: ["вдоль дороги", "на улице", "промзона", "обочина", "na ulicy", "na drodze", "industrial area", "straßenrand"],
+            shower: ["душ", "душевая", "prysznic", "shower", "dusche"],
+            security: ["охрана", "забор", "камеры", "ochrona", "strzeżony", "security", "bewacht"],
+            quiet: ["тихо", "тишина", "spokojnie", "quiet", "ruhig"],
+            shop: ["магазин", "супермаркет", "sklep", "shop", "lidl", "aldi", "biedronka"]
         };
 
-        let activeFilters = new Set();
-        let markers = [];
+        // Загрузка реальных мест вокруг с помощью Overpass API
+        function loadRealPlaces(lat, lng) {
+            document.getElementById('loading').style.display = 'block';
+
+            // Радиус поиска около 15 км
+            const query = `
+                [out:json];
+                (
+                  node["amenity"="parking"](around:15000, ${lat}, ${lng});
+                  node["highway"="rest_area"](around:15000, ${lat}, ${lng});
+                  node["amenity"="fuel"](around:15000, ${lat}, ${lng});
+                  node["industrial"](around:15000, ${lat}, ${lng});
+                );
+                out body 50;
+            `;
+
+            fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query))
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    locations = data.elements.map(el => {
+                        let type = 'parking';
+                        if (el.tags.amenity === 'fuel') type = 'fuel';
+                        if (el.tags.industrial) type = 'factory';
+
+                        return {
+                            name: el.tags.name || (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR')),
+                            type: type,
+                            coords: [el.lat, el.lon],
+                            reviews: [
+                                el.tags.description || "Загрузка реальных отзывов...",
+                                el.tags.note || ""
+                            ]
+                        };
+                    });
+                    renderMarkers();
+                })
+                .catch(err => {
+                    document.getElementById('loading').style.display = 'none';
+                    console.log('Ошибка загрузки данных', err);
+                });
+        }
 
         function renderMarkers() {
             markers.forEach(m => map.removeLayer(m.marker));
@@ -187,11 +190,8 @@
                             words.some(w => rev.toLowerCase().includes(w))
                         );
                         if (hasWord) {
-                            if (filter === 'no_parking') {
-                                isWarning = true;
-                            } else {
-                                isMatch = true;
-                            }
+                            if (filter === 'no_parking') isWarning = true;
+                            else isMatch = true;
                         }
                     });
                 }
@@ -216,13 +216,7 @@
                 });
 
                 const m = L.marker(loc.coords, {icon: customIcon}).addTo(map);
-                
-                let popupContent = `<b>${loc.name}</b><br><hr style="margin:5px 0;"><b>Отзывы:</b><br>`;
-                loc.reviews.forEach(r => {
-                    popupContent += `• <i>"${r}"</i><br>`;
-                });
-
-                m.bindPopup(popupContent);
+                m.bindPopup(`<b>${loc.name}</b><br><a href="https://www.google.com/maps/search/?api=1&query=${loc.coords[0]},${loc.coords[1]}" target="_blank" style="color:#3b82f6;font-weight:bold;">📍 Открыть маршрут</a>`);
                 markers.push({ location: loc, marker: m });
             });
         }
@@ -237,11 +231,12 @@
             renderMarkers();
         }
 
+        // Определение местоположения пользователя
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
                 var lng = position.coords.longitude;
-                map.setView([lat, lng], 10);
+                map.setView([lat, lng], 11);
                 
                 L.circleMarker([lat, lng], {
                     radius: 9,
@@ -250,10 +245,15 @@
                     fillColor: '#3b82f6',
                     fillOpacity: 1
                 }).addTo(map).bindPopup("<b>Вы здесь</b>");
-            });
-        }
 
-        renderMarkers();
+                loadRealPlaces(lat, lng);
+            }, function() {
+                // Если нет геолокации, загружаем по умолчанию для центра Варшавы
+                loadRealPlaces(52.2297, 21.0122);
+            });
+        } else {
+            loadRealPlaces(52.2297, 21.0122);
+        }
     </script>
 </body>
 </html>
