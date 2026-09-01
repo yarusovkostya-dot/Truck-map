@@ -3,15 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Карта парковок TIR</title>
+    <title>Поиск парковок и фирм TIR</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; background: #121212; }
         #map { width: 100%; height: 100vh; }
         
-        /* Панель фильтров */
         .filter-bar {
             position: absolute;
             top: 12px;
@@ -21,44 +20,70 @@
             display: flex;
             gap: 8px;
             overflow-x: auto;
-            padding: 4px;
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(5px);
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            padding: 6px;
+            background: rgba(30, 30, 30, 0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 14px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
         }
         .filter-btn {
-            background: #ffffff;
-            border: 2px solid #007bff;
-            color: #007bff;
+            background: #2a2a2a;
+            border: 2px solid #3b82f6;
+            color: #ffffff;
             padding: 8px 14px;
             border-radius: 20px;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 13px;
             white-space: nowrap;
             cursor: pointer;
+            transition: all 0.2s ease;
         }
         .filter-btn.active {
-            background: #007bff;
+            background: #3b82f6;
             color: #ffffff;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.6);
+        }
+        .filter-btn.danger-btn {
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+        .filter-btn.danger-btn.active {
+            background: #ef4444;
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
         }
 
-        /* Маркеры */
         .custom-marker {
             display: flex;
             align-items: center;
             justify-content: center;
-            background: white;
+            background: #ffffff;
             border-radius: 50%;
-            border: 3px solid #007bff;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+            border: 3px solid #3b82f6;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.5);
             font-size: 18px;
+            transition: transform 0.2s;
+        }
+        .custom-marker.matched {
+            border-color: #22c55e;
+            background: #dcfce7;
+            transform: scale(1.3);
+            z-index: 1000 !important;
+        }
+        .custom-marker.warning {
+            border-color: #ef4444;
+            background: #fee2e2;
+            transform: scale(1.3);
+            z-index: 1000 !important;
         }
     </style>
 </head>
 <body>
 
     <div class="filter-bar">
+        <button class="filter-btn danger-btn" onclick="toggleFilter('no_parking', this)">⛔ Выгоняют / Нельзя паузу</button>
+        <button class="filter-btn" onclick="toggleFilter('firm_parking', this)">🅿️ Парковка у фирмы</button>
+        <button class="filter-btn" onclick="toggleFilter('street_parking', this)">🛣️ Вдоль дороги</button>
         <button class="filter-btn" onclick="toggleFilter('shower', this)">🚿 Душ</button>
         <button class="filter-btn" onclick="toggleFilter('security', this)">🛡️ Охрана</button>
         <button class="filter-btn" onclick="toggleFilter('quiet', this)">🤫 Тихо</button>
@@ -78,35 +103,157 @@
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
+        const locations = [
+            {
+                name: "🏢 Amazon Logistics Poznań",
+                type: "factory",
+                coords: [52.3300, 16.8200],
+                reviews: [
+                    "Brak parkingu na terenie, wyganiają przed bramą!", 
+                    "Стоять нельзя, сразу приезжает полиция и штрафует."
+                ]
+            },
+            {
+                name: "🏢 Sklad Raben Logistics",
+                type: "factory",
+                coords: [52.3600, 16.9500],
+                reviews: [
+                    "Jest duży parking przed firmą z toaletą.", 
+                    "Good company parking in front of gate."
+                ]
+            },
+            {
+                name: "🅿️ Autohof A2 Euro-Rest",
+                type: "parking",
+                coords: [52.1530, 20.9300],
+                reviews: [
+                    "Sehr saubere Dusche und bewachtes gelände.", 
+                    "Czysty prysznic, bezpieczny parking."
+                ]
+            }
+        ];
+
+        const keywords = {
+            no_parking: [
+                "нельзя стоять", "выгоняют", "паузу нельзя", "запрещено", "прогоняют", "стоянка запрещена", "полиция", "ночевать нельзя",
+                "zakaz postoju", "wyganiają", "nie można stać", "zakaz pauzy", "zakaz parkowania", "policja wygania", "nie wolno",
+                "no parking", "chased away", "no pause", "forbidden", "kicked out", "police", "no overnight",
+                "parkverbot", "verboten", "verjagt", "keine pause", "polizei", "verboten zu parken"
+            ],
+            firm_parking: [
+                "парковка у фирмы", "перед фирмой", "на территории", "перед шлагбаумом", "карман",
+                "przed firmą", "na terenie", "parking przed", "miejsca przed", "parking firmowy",
+                "company parking", "in front of gate", "on-site", "inside",
+                "vor der firma", "firmenparkplatz", "auf dem gelände", "vor dem tor"
+            ],
+            street_parking: [
+                "вдоль дороги", "на улице", "промзона", "промка", "обочина", "вдоль забора",
+                "na ulicy", "na drodze", "pobocze", "strefa przemysłowa", "wzdłuż płotu",
+                "on the street", "side road", "industrial area", "street parking", "along the road",
+                "an der straße", "straßenrand", "gewerbegebiet", "straße"
+            ],
+            shower: [
+                "душ", "душевая", "prysznic", "prysznice", "shower", "showers", "dusche", "duschen", "dus", "dušas", "sprcha"
+            ],
+            security: [
+                "охрана", "забор", "камеры", "охраняемый", "безопасный",
+                "ochrona", "strzeżony", "płot", "kamery", "bezpiecznie",
+                "security", "guarded", "fenced", "cameras", "safe",
+                "bewacht", "zaun", "kameras", "sicherheit"
+            ],
+            quiet: [
+                "тихо", "тишина", "spokojnie", "cicho", "quiet", "ruhig", "silent"
+            ],
+            shop: [
+                "магазин", "супермаркет", "sklep", "market", "shop", "supermarket", "lidl", "aldi", "biedronka", "kaufland", "edeka"
+            ]
+        };
+
+        let activeFilters = new Set();
+        let markers = [];
+
+        function renderMarkers() {
+            markers.forEach(m => map.removeLayer(m.marker));
+            markers = [];
+
+            locations.forEach(loc => {
+                let isMatch = false;
+                let isWarning = false;
+
+                if (activeFilters.size > 0) {
+                    activeFilters.forEach(filter => {
+                        const words = keywords[filter] || [];
+                        const hasWord = loc.reviews.some(rev => 
+                            words.some(w => rev.toLowerCase().includes(w))
+                        );
+                        if (hasWord) {
+                            if (filter === 'no_parking') {
+                                isWarning = true;
+                            } else {
+                                isMatch = true;
+                            }
+                        }
+                    });
+                }
+
+                let iconSymbol = '🅿️';
+                if (loc.type === 'fuel') iconSymbol = '⛽';
+                if (loc.type === 'factory') iconSymbol = '🏢';
+
+                let markerClass = 'custom-marker';
+                if (isWarning) {
+                    markerClass = 'custom-marker warning';
+                    iconSymbol = '⚠️';
+                } else if (isMatch) {
+                    markerClass = 'custom-marker matched';
+                }
+
+                const customIcon = L.divIcon({
+                    className: markerClass,
+                    html: iconSymbol,
+                    iconSize: [38, 38],
+                    iconAnchor: [19, 19]
+                });
+
+                const m = L.marker(loc.coords, {icon: customIcon}).addTo(map);
+                
+                let popupContent = `<b>${loc.name}</b><br><hr style="margin:5px 0;"><b>Отзывы:</b><br>`;
+                loc.reviews.forEach(r => {
+                    popupContent += `• <i>"${r}"</i><br>`;
+                });
+
+                m.bindPopup(popupContent);
+                markers.push({ location: loc, marker: m });
+            });
+        }
+
+        function toggleFilter(type, btn) {
+            btn.classList.toggle('active');
+            if (activeFilters.has(type)) {
+                activeFilters.delete(type);
+            } else {
+                activeFilters.add(type);
+            }
+            renderMarkers();
+        }
+
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(function(position) {
                 var lat = position.coords.latitude;
                 var lng = position.coords.longitude;
-                map.setView([lat, lng], 11);
+                map.setView([lat, lng], 10);
                 
                 L.circleMarker([lat, lng], {
                     radius: 9,
                     color: '#ffffff',
                     weight: 3,
-                    fillColor: '#007bff',
+                    fillColor: '#3b82f6',
                     fillOpacity: 1
                 }).addTo(map).bindPopup("<b>Вы здесь</b>");
             });
         }
 
-        var parkingIcon = L.divIcon({
-            className: 'custom-marker',
-            html: '🚚',
-            iconSize: [38, 38],
-            iconAnchor: [19, 19]
-        });
-
-        var parking = L.marker([52.2297, 21.0122], {icon: parkingIcon}).addTo(map);
-        parking.bindPopup("<b>🚚 Парковка A2 TIR</b><br>• 🚿 <i>Чистый душ (3€)</i><br>• 🤫 <i>Тихо ночью</i>");
-
-        function toggleFilter(type, btn) {
-            btn.classList.toggle('active');
-        }
+        renderMarkers();
     </script>
 </body>
 </html>
