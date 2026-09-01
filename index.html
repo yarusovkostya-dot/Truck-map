@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Карта TIR парковок и фирм</title>
+    <title>Карта TIR парковок</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -62,7 +62,6 @@
             border: 3px solid #3b82f6;
             box-shadow: 0 3px 8px rgba(0,0,0,0.5);
             font-size: 18px;
-            transition: transform 0.2s;
         }
         .custom-marker.matched {
             border-color: #22c55e;
@@ -77,7 +76,6 @@
             z-index: 1000 !important;
         }
 
-        /* Кнопка центрирования геолокации */
         .my-location-btn {
             position: absolute;
             bottom: 80px;
@@ -86,18 +84,18 @@
             background: #1e1e1e;
             border: 2px solid #3b82f6;
             color: white;
-            width: 44px;
-            height: 44px;
+            width: 46px;
+            height: 46px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 22px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
             cursor: pointer;
         }
         .my-location-btn:active {
-            transform: scale(0.92);
+            transform: scale(0.9);
         }
 
         .leaflet-popup-content-wrapper {
@@ -134,12 +132,13 @@
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.85);
             color: white;
-            padding: 8px 16px;
+            padding: 10px 18px;
             border-radius: 20px;
             font-size: 13px;
             display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
     </style>
 </head>
@@ -177,7 +176,7 @@
         });
 
         var map = L.map('map', {
-            center: [52.2297, 21.0122],
+            center: [52.14, 20.84], // Дефолт в районе Sękoćin / Raszyn / Janki
             zoom: 12,
             layers: [streetMap]
         });
@@ -210,30 +209,32 @@
         function loadRealPlaces(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
-            // Широкий охват стоянок, зон отдыха, АЗС и промзон
-            const query = `
-                [out:json];
-                (
-                  node["amenity"="parking"](around:25000, ${lat}, ${lng});
-                  way["amenity"="parking"](around:25000, ${lat}, ${lng});
-                  node["highway"="rest_area"](around:25000, ${lat}, ${lng});
-                  node["highway"="services"](around:25000, ${lat}, ${lng});
-                  node["amenity"="fuel"](around:25000, ${lat}, ${lng});
-                  node["landuse"="industrial"](around:25000, ${lat}, ${lng});
-                );
-                out center 120;
-            `;
+            // Легкий универсальный запрос
+            const query = `[out:json][timeout:15];
+(
+  node["amenity"="parking"](around:20000,${lat},${lng});
+  way["amenity"="parking"](around:20000,${lat},${lng});
+  node["amenity"="fuel"](around:20000,${lat},${lng});
+  node["highway"="rest_area"](around:20000,${lat},${lng});
+  node["highway"="services"](around:20000,${lat},${lng});
+);
+out center 150;`;
 
-            fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query))
+            // Резервный зеркальный сервер (работает быстрей)
+            const apiUrl = 'https://overpass.kumi.systems/api/interpreter?data=' + encodeURIComponent(query);
+
+            fetch(apiUrl)
                 .then(res => res.json())
                 .then(data => {
                     document.getElementById('loading').style.display = 'none';
+                    if (!data.elements) return;
+
                     locations = data.elements.map(el => {
                         const tags = el.tags || {};
                         const latPos = el.lat || (el.center && el.center.lat);
                         const lonPos = el.lon || (el.center && el.center.lon);
 
-                        // Отсекаем явные легковые мелкие подземные паркинги
+                        if (!latPos || !lonPos) return null;
                         if (tags.parking === 'underground' || tags.parking === 'multi-storey') return null;
 
                         let type = 'parking';
@@ -243,8 +244,6 @@
                             type = 'autohof';
                         } else if (tags.amenity === 'fuel') {
                             type = 'fuel';
-                        } else if (tags.landuse === 'industrial') {
-                            type = 'factory';
                         }
 
                         let feeTag = tags.fee === 'yes' ? 'fee_yes' : (tags.fee === 'no' ? 'fee_no' : '');
@@ -252,7 +251,7 @@
                         let dkvTag = (tags['payment:dkv'] === 'yes' || tags.payment === 'dkv') ? 'dkv' : '';
 
                         return {
-                            name: tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС' : (type === 'factory' ? '🏢 Промзона / Фирма' : '🅿️ Парковка TIR'))),
+                            name: tags.name || (type === 'autohof' ? '🚛 Autohof' : (type === 'fuel' ? '⛽ АЗС' : '🅿️ Стоянка / Парковка')),
                             type: type,
                             coords: [latPos, lonPos],
                             reviews: [
@@ -264,13 +263,13 @@
                                 dkvTag
                             ]
                         };
-                    }).filter(item => item && item.coords[0] && item.coords[1]);
+                    }).filter(Boolean);
 
                     renderMarkers();
                 })
                 .catch(err => {
-                    document.getElementById('loading').style.display = 'none';
-                    console.log('Ошибка загрузки данных', err);
+                    document.getElementById('loading').innerText = '❌ Ошибка сети, повторите попытку';
+                    console.log('Ошибка:', err);
                 });
         }
 
@@ -298,7 +297,6 @@
                 let iconSymbol = '🅿️';
                 if (loc.type === 'autohof') iconSymbol = '🚛';
                 if (loc.type === 'fuel') iconSymbol = '⛽';
-                if (loc.type === 'factory') iconSymbol = '🏢';
 
                 let markerClass = 'custom-marker';
                 if (isWarning) {
@@ -311,8 +309,8 @@
                 const customIcon = L.divIcon({
                     className: markerClass,
                     html: iconSymbol,
-                    iconSize: [38, 38],
-                    iconAnchor: [19, 19]
+                    iconSize: [36, 36],
+                    iconAnchor: [18, 18]
                 });
 
                 const m = L.marker(loc.coords, {icon: customIcon}).addTo(map);
@@ -354,10 +352,10 @@
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(function(position) {
                     userCoords = [position.coords.latitude, position.coords.longitude];
-                    map.setView(userCoords, 12);
+                    map.setView(userCoords, 13);
                     
                     L.circleMarker(userCoords, {
-                        radius: 9,
+                        radius: 8,
                         color: '#ffffff',
                         weight: 3,
                         fillColor: '#3b82f6',
@@ -365,16 +363,16 @@
                     }).addTo(map).bindPopup("<b>Вы здесь</b>");
 
                     loadRealPlaces(userCoords[0], userCoords[1]);
-                }, function() {
-                    loadRealPlaces(52.2297, 21.0122);
-                });
+                }, function(err) {
+                    // В случае ошибки локации берем координаты по умолчанию (Янки / Секоцин)
+                    loadRealPlaces(52.14, 20.84);
+                }, { timeout: 7000 });
             } else {
-                loadRealPlaces(52.2297, 21.0122);
+                loadRealPlaces(52.14, 20.84);
             }
         }
 
         getUserLocation();
     </script>
 </body>
-                                                               </html>
-                                                               
+</html>
