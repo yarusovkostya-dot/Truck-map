@@ -95,6 +95,21 @@
             cursor: pointer;
         }
 
+        #loading {
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(0,0,0,0.85);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
         .leaflet-popup-content-wrapper {
             background: #1e1e1e !important;
             color: #ffffff !important;
@@ -140,6 +155,7 @@
     </div>
 
     <div class="my-location-btn" onclick="centerOnUser()">🎯</div>
+    <div id="loading">⏳ Загрузка реальных парковок...</div>
     <div id="map"></div>
 
     <script>
@@ -150,7 +166,7 @@
         const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18 });
 
         var map = L.map('map', {
-            center: [52.14, 20.84],
+            center: [52.40, 16.92], // По умолчанию Познань
             zoom: 12,
             layers: [streetMap]
         });
@@ -158,49 +174,75 @@
         L.control.layers({ "🗺️ Карта": streetMap, "🛰️ Спутник": satelliteMap }, null, { position: 'bottomright' }).addTo(map);
 
         let userCoords = null;
+        let locations = [];
         let markers = [];
         let activeFilters = new Set();
 
-        // Базовый локальный массив точек (загружается мгновенно)
-        const locations = [
-            {
-                name: "🅿️ Парковка Sękocin (S8)",
-                type: "parking",
-                coords: [52.0945, 20.9021],
-                reviews: ["бесплатная", "тихо", "вдоль дороги", "душ"]
-            },
-            {
-                name: "⛽ АЗС BP Janki",
-                type: "fuel",
-                coords: [52.1141, 20.8912],
-                reviews: ["платная", "dkv", "душ", "магазин"]
-            },
-            {
-                name: "🏢 Промзона Sękocin Stary",
-                type: "factory",
-                coords: [52.0882, 20.9150],
-                reviews: ["парковка у фирмы", "бесплатная", "тихо"]
-            },
-            {
-                name: "🚛 Autohof Raszyn",
-                type: "autohof",
-                coords: [52.1381, 20.9230],
-                reviews: ["платная", "охрана", "душ", "dkv", "магазин"]
-            }
-        ];
-
         const keywords = {
-            no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя"],
-            firm_parking: ["парковка у фирмы", "перед фирмой"],
-            street_parking: ["вдоль дороги", "промзона"],
-            free_parking: ["бесплатная", "бесплатно"],
-            paid_parking: ["платная", "платно"],
+            no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "no parking", "zakaz"],
+            firm_parking: ["парковка у фирмы", "перед фирмой", "industrial", "przemysłowa"],
+            street_parking: ["вдоль дороги", "промзона", "street", "ulica"],
+            free_parking: ["бесплатная", "бесплатно", "free", "bezpłatny", "fee_no"],
+            paid_parking: ["платная", "платно", "paid", "płatny", "fee_yes"],
             dkv: ["dkv"],
-            shower: ["душ"],
-            security: ["охрана"],
-            quiet: ["тихо"],
-            shop: ["магазин"]
+            shower: ["душ", "shower", "prysznic"],
+            security: ["охрана", "security", "strzeżony"],
+            quiet: ["тихо", "quiet", "spokojny"],
+            shop: ["магазин", "shop", "sklep", "market"]
         };
+
+        // Загрузка РЕАЛЬНЫХ мест из OpenStreetMap в радиусе ~30 км вокруг координат
+        function fetchRealData(lat, lng) {
+            document.getElementById('loading').style.display = 'block';
+
+            // Лёгкий Overpass-запрос: грузовые парковки, АЗС и парковки в радиусе 30000м
+            const query = `[out:json][timeout:15];
+            (
+              node["amenity"="parking"]["hgv"="yes"](around:30000, ${lat}, ${lng});
+              way["amenity"="parking"]["hgv"="yes"](around:30000, ${lat}, ${lng});
+              node["amenity"="fuel"](around:20000, ${lat}, ${lng});
+            );
+            out center 60;`;
+
+            const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    locations = data.elements.map(el => {
+                        const clat = el.lat || (el.center && el.center.lat);
+                        const clon = el.lon || (el.center && el.center.lon);
+                        const tags = el.tags || {};
+                        
+                        let type = 'parking';
+                        if (tags.amenity === 'fuel') type = 'fuel';
+                        
+                        let name = tags.name || tags.brand || (type === 'fuel' ? '⛽ АЗС' : '🅿️ Парковка TIR');
+
+                        let reviewText = [
+                            tags.fee === 'no' ? 'бесплатная fee_no' : '',
+                            tags.fee === 'yes' ? 'платная fee_yes' : '',
+                            tags.shower === 'yes' ? 'душ shower' : '',
+                            tags.access ? tags.access : '',
+                            name
+                        ].join(' ');
+
+                        return {
+                            name: name,
+                            type: type,
+                            coords: [clat, clon],
+                            reviews: [reviewText]
+                        };
+                    }).filter(item => item.coords[0] && item.coords[1]);
+
+                    renderMarkers();
+                })
+                .catch(err => {
+                    document.getElementById('loading').style.display = 'none';
+                    console.error('Ошибка загрузки OSM:', err);
+                });
+        }
 
         function renderMarkers() {
             markers.forEach(m => map.removeLayer(m.marker));
@@ -221,9 +263,7 @@
                 }
 
                 let iconSymbol = '🅿️';
-                if (loc.type === 'autohof') iconSymbol = '🚛';
                 if (loc.type === 'fuel') iconSymbol = '⛽';
-                if (loc.type === 'factory') iconSymbol = '🏢';
 
                 let markerClass = 'custom-marker';
                 if (isWarning) {
@@ -248,8 +288,8 @@
                 m.bindPopup(`
                     <div style="text-align:center;">
                         <b style="font-size:14px;">${loc.name}</b>
-                        <a href="${googleSearchUrl}" target="_blank" class="popup-btn btn-google">🗺️ Google Карта / Отзывы</a>
-                        <a href="${googleRouteUrl}" target="_blank" class="popup-btn btn-route">🧭 Навигатор</a>
+                        <a href="${googleSearchUrl}" target="_blank" class="popup-btn btn-google">🗺️ Отзывы в Google</a>
+                        <a href="${googleRouteUrl}" target="_blank" class="popup-btn btn-route">🧭 Маршрут</a>
                     </div>
                 `);
 
@@ -265,26 +305,35 @@
         }
 
         function centerOnUser() {
-            if (userCoords) map.setView(userCoords, 14);
-            else getUserLocation();
+            if (userCoords) {
+                map.setView(userCoords, 13);
+                fetchRealData(userCoords[0], userCoords[1]);
+            } else {
+                getUserLocation();
+            }
         }
 
         function getUserLocation() {
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(function(position) {
                     userCoords = [position.coords.latitude, position.coords.longitude];
-                    map.setView(userCoords, 13);
+                    map.setView(userCoords, 12);
                     
                     L.circleMarker(userCoords, {
                         radius: 8, color: '#ffffff', weight: 3, fillColor: '#3b82f6', fillOpacity: 1
                     }).addTo(map).bindPopup("<b>Вы здесь</b>");
-                });
+
+                    fetchRealData(userCoords[0], userCoords[1]);
+                }, function() {
+                    // Если геопозиция выключена — загружаем по центру по умолчанию
+                    fetchRealData(52.40, 16.92);
+                }, { timeout: 8000 });
+            } else {
+                fetchRealData(52.40, 16.92);
             }
         }
 
-        renderMarkers();
         getUserLocation();
     </script>
 </body>
-    </html>
-    
+</html>
