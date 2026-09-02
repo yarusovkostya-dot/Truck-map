@@ -63,18 +63,6 @@
             box-shadow: 0 3px 8px rgba(0,0,0,0.5);
             font-size: 18px;
         }
-        .custom-marker.matched {
-            border-color: #22c55e;
-            background: #dcfce7;
-            transform: scale(1.2);
-            z-index: 1000 !important;
-        }
-        .custom-marker.warning {
-            border-color: #ef4444;
-            background: #fee2e2;
-            transform: scale(1.2);
-            z-index: 1000 !important;
-        }
 
         .my-location-btn {
             position: absolute;
@@ -166,7 +154,7 @@
         const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18 });
 
         var map = L.map('map', {
-            center: [52.40, 16.92], // По умолчанию Познань
+            center: [52.40, 16.92],
             zoom: 12,
             layers: [streetMap]
         });
@@ -180,22 +168,20 @@
 
         const keywords = {
             no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "no parking", "zakaz"],
-            firm_parking: ["парковка у фирмы", "перед фирмой", "industrial", "przemysłowa"],
-            street_parking: ["вдоль дороги", "промзона", "street", "ulica"],
+            firm_parking: ["парковка у фирмы", "перед фирмой", "industrial", "przemysłowa", "firm"],
+            street_parking: ["вдоль дороги", "промзона", "street", "ulica", "on-street"],
             free_parking: ["бесплатная", "бесплатно", "free", "bezpłatny", "fee_no"],
             paid_parking: ["платная", "платно", "paid", "płatny", "fee_yes"],
             dkv: ["dkv"],
             shower: ["душ", "shower", "prysznic"],
             security: ["охрана", "security", "strzeżony"],
             quiet: ["тихо", "quiet", "spokojny"],
-            shop: ["магазин", "shop", "sklep", "market"]
+            shop: ["магазин", "shop", "sklep", "market", "supermarket"]
         };
 
-        // Загрузка РЕАЛЬНЫХ мест из OpenStreetMap в радиусе ~30 км вокруг координат
         function fetchRealData(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
-            // Лёгкий Overpass-запрос: грузовые парковки, АЗС и парковки в радиусе 30000м
             const query = `[out:json][timeout:15];
             (
               node["amenity"="parking"]["hgv"="yes"](around:30000, ${lat}, ${lng});
@@ -245,36 +231,34 @@
         }
 
         function renderMarkers() {
+            // Очищаем текущие маркеры с карты
             markers.forEach(m => map.removeLayer(m.marker));
             markers = [];
 
             locations.forEach(loc => {
-                let isMatch = false;
-                let isWarning = false;
-
+                // Если активны фильтры, проверяем подходят ли данные точки
                 if (activeFilters.size > 0) {
+                    let shouldShow = false;
+                    
                     activeFilters.forEach(filter => {
                         const words = keywords[filter] || [];
-                        if (loc.reviews.some(rev => words.some(w => rev.toLowerCase().includes(w)))) {
-                            if (filter === 'no_parking') isWarning = true;
-                            else isMatch = true;
+                        const hasMatch = loc.reviews.some(rev => 
+                            words.some(w => rev.toLowerCase().includes(w))
+                        );
+                        if (hasMatch) {
+                            shouldShow = true;
                         }
                     });
+
+                    // Если точка не соответствует активным фильтрам, пропускаем её (не отображаем)
+                    if (!shouldShow) return;
                 }
 
                 let iconSymbol = '🅿️';
                 if (loc.type === 'fuel') iconSymbol = '⛽';
 
-                let markerClass = 'custom-marker';
-                if (isWarning) {
-                    markerClass = 'custom-marker warning';
-                    iconSymbol = '⚠️';
-                } else if (isMatch) {
-                    markerClass = 'custom-marker matched';
-                }
-
                 const customIcon = L.divIcon({
-                    className: markerClass,
+                    className: 'custom-marker',
                     html: iconSymbol,
                     iconSize: [36, 36],
                     iconAnchor: [18, 18]
@@ -299,8 +283,11 @@
 
         function toggleFilter(type, btn) {
             btn.classList.toggle('active');
-            if (activeFilters.has(type)) activeFilters.delete(type);
-            else activeFilters.add(type);
+            if (activeFilters.has(type)) {
+                activeFilters.delete(type);
+            } else {
+                activeFilters.add(type);
+            }
             renderMarkers();
         }
 
@@ -325,7 +312,6 @@
 
                     fetchRealData(userCoords[0], userCoords[1]);
                 }, function() {
-                    // Если геопозиция выключена — загружаем по центру по умолчанию
                     fetchRealData(52.40, 16.92);
                 }, { timeout: 8000 });
             } else {
@@ -336,4 +322,5 @@
         getUserLocation();
     </script>
 </body>
-</html>
+        </html>
+        
