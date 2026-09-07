@@ -143,7 +143,7 @@
     </div>
 
     <div class="my-location-btn" onclick="centerOnUser()">🎯</div>
-    <div id="loading">⏳ Загрузка реальных парковок...</div>
+    <div id="loading">🔍 Сканируем парковки, АЗС и промзоны...</div>
     <div id="map"></div>
 
     <script>
@@ -166,29 +166,41 @@
         let markers = [];
         let activeFilters = new Set();
 
+        // Многоязычные ключевые слова (RU, EN, PL, DE)
         const keywords = {
-            no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "no parking", "zakaz"],
-            firm_parking: ["парковка у фирмы", "перед фирмой", "industrial", "przemysłowa", "firm"],
-            street_parking: ["вдоль дороги", "промзона", "street", "ulica", "on-street"],
-            free_parking: ["бесплатная", "бесплатно", "free", "bezpłatny", "fee_no"],
-            paid_parking: ["платная", "платно", "paid", "płatny", "fee_yes"],
-            dkv: ["dkv"],
-            shower: ["душ", "shower", "prysznic"],
-            security: ["охрана", "security", "strzeżony"],
-            quiet: ["тихо", "quiet", "spokojny"],
-            shop: ["магазин", "shop", "sklep", "market", "supermarket"]
+            no_parking: ["нельзя стоять", "выгоняют", "паузу нельзя", "no parking", "zakaz postoju", "wyganiają", "parkverbot", "no pause"],
+            firm_parking: ["парковка у фирмы", "перед фирмой", "industrial", "przemysłowa", "firm", "firma", "gewerbegebiet", "warehouse", "logistics"],
+            street_parking: ["вдоль дороги", "промзона", "street", "ulica", "on-street", "straßenrand", "pobocze"],
+            free_parking: ["бесплатная", "бесплатно", "free", "bezpłatny", "bezpłatna", "kostenlos", "gebührenfrei", "fee_no"],
+            paid_parking: ["платная", "платно", "paid", "płatny", "płatna", "kostenpflichtig", "gebührenpflichtig", "fee_yes"],
+            dkv: ["dkv", "дкв"],
+            shower: ["душ", "shower", "prysznic", "dusche"],
+            security: ["охрана", "security", "strzeżony", "bewacht", "fenced", "guarded"],
+            quiet: ["тихо", "quiet", "spokojny", "spokojnie", "ruhig"],
+            shop: ["магазин", "shop", "sklep", "market", "supermarket", "lidl", "aldi", "biedronka", "edeka", "rewe"]
         };
+
+        // Все варианты ключевых слов для ПЕРВИЧНОГО ОТБОРА TIR-мест (на всех языках)
+        const tirGeneralKeywords = [
+            "hgv", "truck", "tir", "lorry", "lkw", "parking", "autohof", "rasthof",
+            "postój", "postoj", "parking dla ciężarówek", "płatny", "bezpłatny",
+            "dkv", "shower", "prysznic", "dusche", "fenced", "strzeżony", "bewacht",
+            "industrial", "przemysłowa", "logistics", "logistyka", "gewerbegebiet", "warehouse"
+        ];
 
         function fetchRealData(lat, lng) {
             document.getElementById('loading').style.display = 'block';
 
-            const query = `[out:json][timeout:15];
+            // Ищем парковки, АЗС, логистику, склады и автохофы в радиусе 25 км
+            const query = `[out:json][timeout:20];
             (
-              node["amenity"="parking"]["hgv"="yes"](around:30000, ${lat}, ${lng});
-              way["amenity"="parking"]["hgv"="yes"](around:30000, ${lat}, ${lng});
+              node["amenity"="parking"](around:25000, ${lat}, ${lng});
+              way["amenity"="parking"](around:25000, ${lat}, ${lng});
               node["amenity"="fuel"](around:20000, ${lat}, ${lng});
+              way["landuse"="industrial"](around:20000, ${lat}, ${lng});
+              node["building"="warehouse"](around:20000, ${lat}, ${lng});
             );
-            out center 60;`;
+            out center 120;`;
 
             const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
 
@@ -196,32 +208,45 @@
                 .then(res => res.json())
                 .then(data => {
                     document.getElementById('loading').style.display = 'none';
-                    locations = data.elements.map(el => {
+
+                    const rawElements = data.elements || [];
+                    const filteredLocations = [];
+
+                    rawElements.forEach(el => {
                         const clat = el.lat || (el.center && el.center.lat);
                         const clon = el.lon || (el.center && el.center.lon);
+                        if (!clat || !clon) return;
+
                         const tags = el.tags || {};
-                        
-                        let type = 'parking';
-                        if (tags.amenity === 'fuel') type = 'fuel';
-                        
-                        let name = tags.name || tags.brand || (type === 'fuel' ? '⛽ АЗС' : '🅿️ Парковка TIR');
+                        const tagString = JSON.stringify(tags).toLowerCase();
 
-                        let reviewText = [
-                            tags.fee === 'no' ? 'бесплатная fee_no' : '',
-                            tags.fee === 'yes' ? 'платная fee_yes' : '',
-                            tags.shower === 'yes' ? 'душ shower' : '',
-                            tags.access ? tags.access : '',
-                            name
-                        ].join(' ');
+                        // ПЕРВИЧНЫЙ ФИЛЬТР: Проверяем, упоминается ли TIR / парковка / грузовые темы / DKV / душ на любом языке
+                        const isTIRRelated = tirGeneralKeywords.some(kw => tagString.includes(kw));
 
-                        return {
-                            name: name,
-                            type: type,
-                            coords: [clat, clon],
-                            reviews: [reviewText]
-                        };
-                    }).filter(item => item.coords[0] && item.coords[1]);
+                        if (isTIRRelated) {
+                            let type = 'parking';
+                            if (tags.amenity === 'fuel') type = 'fuel';
+                            if (tags.landuse === 'industrial' || tags.building === 'warehouse') type = 'firm';
 
+                            let name = tags.name || tags.brand || tags.operator || '';
+                            if (!name) {
+                                if (type === 'fuel') name = '⛽ АЗС';
+                                else if (type === 'firm') name = '🏢 Логистика / Промзона';
+                                else name = '🅿️ Парковка TIR';
+                            }
+
+                            let infoText = `${name} ${tagString}`;
+
+                            filteredLocations.push({
+                                name: name,
+                                type: type,
+                                coords: [clat, clon],
+                                reviews: [infoText]
+                            });
+                        }
+                    });
+
+                    locations = filteredLocations;
                     renderMarkers();
                 })
                 .catch(err => {
@@ -231,15 +256,14 @@
         }
 
         function renderMarkers() {
-            // Очищаем текущие маркеры с карты
             markers.forEach(m => map.removeLayer(m.marker));
             markers = [];
 
             locations.forEach(loc => {
-                // Если активны фильтры, проверяем подходят ли данные точки
+                // Если включены фильтры кнопками — проверяем соответствие
                 if (activeFilters.size > 0) {
                     let shouldShow = false;
-                    
+
                     activeFilters.forEach(filter => {
                         const words = keywords[filter] || [];
                         const hasMatch = loc.reviews.some(rev => 
@@ -250,12 +274,13 @@
                         }
                     });
 
-                    // Если точка не соответствует активным фильтрам, пропускаем её (не отображаем)
+                    // Не подходит под фильтр -> скрываем с карты
                     if (!shouldShow) return;
                 }
 
                 let iconSymbol = '🅿️';
                 if (loc.type === 'fuel') iconSymbol = '⛽';
+                if (loc.type === 'firm') iconSymbol = '🏢';
 
                 const customIcon = L.divIcon({
                     className: 'custom-marker',
@@ -272,8 +297,8 @@
                 m.bindPopup(`
                     <div style="text-align:center;">
                         <b style="font-size:14px;">${loc.name}</b>
-                        <a href="${googleSearchUrl}" target="_blank" class="popup-btn btn-google">🗺️ Отзывы в Google</a>
-                        <a href="${googleRouteUrl}" target="_blank" class="popup-btn btn-route">🧭 Маршрут</a>
+                        <a href="${googleSearchUrl}" target="_blank" class="popup-btn btn-google">🗺️ Отзывы и фото в Google</a>
+                        <a href="${googleRouteUrl}" target="_blank" class="popup-btn btn-route">🧭 Построить маршрут</a>
                     </div>
                 `);
 
@@ -322,5 +347,5 @@
         getUserLocation();
     </script>
 </body>
-        </html>
+    </html>
         
